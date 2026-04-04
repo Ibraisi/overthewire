@@ -1,0 +1,55 @@
+quiet := "true"
+max_level := "33"
+
+default:
+    just --list
+
+# Fetch and display level goal + commands from overthewire.org
+fetch level:
+    #!/usr/bin/env nu
+    let lvl = ("{{level}}" | into int) + 1
+    if $lvl > {{max_level}} { error make {msg: $"level {{level}} exceeds max {{max_level}}"} }
+    let url = $"https://overthewire.org/wargames/bandit/bandit($lvl).html"
+    let html = (http get $url)
+    echo $html | pandoc -f html -t markdown --wrap=none | glow -
+
+# Connect to a bandit level via SSH in a tmux split (mode="w" for new window)
+conn level mode="split":
+    #!/usr/bin/env nu
+    if ("{{level}}" | into int) > {{max_level}} { error make {msg: $"level {{level}} exceeds max {{max_level}}"} }
+    let target = $"bandit({{level}})@bandit.labs.overthewire.org"
+    if "{{mode}}" == "w" {
+        tmux new-window -n $"bandit({{level}})" $"ssh -p 2220 ($target)"
+    } else {
+        tmux split-window -h $"ssh -p 2220 ($target)"
+    }
+
+# Save password, notes, and commands for a level to solutions/banditN.sh
+add level password notes commands="":
+    #!/usr/bin/env nu
+    if ("{{level}}" | into int) > {{max_level}} { error make {msg: $"level {{level}} exceeds max {{max_level}}"} }
+    let path = $"/home/ibrahimi/overthewire/Bandit/soultions/bandit({{level}}).sh"
+    let content = $"#!/bin/bash\n# Bandit Level {{level}}\n# Password: {{password}}\n# Notes: {{notes}}\n\n{{commands}}\n"
+    $content | save --force $path
+    print $"Saved to ($path)"
+
+# Send solution commands to the open tmux window for a level
+run level:
+    #!/usr/bin/env nu
+    let path = $"/home/ibrahimi/overthewire/Bandit/soultions/bandit({{level}}).sh"
+    if not ($path | path exists) { error make {msg: $"no solution file for level {{level}}"} }
+    let session = (tmux display-message -p "#S" | str trim)
+    let target = $"($session):bandit({{level}})"
+    open $path | lines | where { |line| ($line | str trim) != "" and not ($line | str starts-with "#") and ($line | str trim) != "#!/bin/bash" } | each { |cmd|
+        run-external "tmux" "send-keys" "-t" $target $cmd "Enter"
+    }
+
+prog:
+    #!/usr/bin/env nu
+    let lvl = (ls soultions/ | get name | sort --reverse | first | parse "soultions/bandit{lvl}.sh" | get lvl | first)
+    if ($lvl | into int) >= {{max_level}} {
+        print "all done"
+    } else {
+        print $"done with ($lvl) - do level (($lvl | into int) + 1)"
+    }
+
